@@ -18,6 +18,13 @@ class OnlyFansApiClient
 
     public function fetchProfile(string $username): array
     {
+        // Guard against path traversal / query injection attacks
+        if (!preg_match('/^[A-Za-z0-9_.-]{1,64}$/', $username)) {
+            throw new \InvalidArgumentException("Invalid OnlyFans username format: {$username}");
+        }
+
+        $encodedUsername = rawurlencode($username);
+
         $headers = [
             'Accept'     => 'application/json',
             'User-Agent' => 'FansAPI-Worker/1.0',
@@ -30,7 +37,7 @@ class OnlyFansApiClient
         $response = Http::withHeaders($headers)
             ->connectTimeout(3)
             ->timeout(5)
-            ->get("{$this->baseUrl}/users/{$username}");
+            ->get("{$this->baseUrl}/users/{$encodedUsername}");
 
         if ($response->status() === 429) {
             $rawRetryAfter = $response->header('Retry-After');

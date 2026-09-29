@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use App\Models\Profile;

@@ -25,6 +25,8 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     public int $maxExceptions = 3;
     public int $timeout = 30; // Job timeout (strictly < worker timeout 60s and retry_after 90s)
     public int $uniqueFor = 300; // 5-minute atomic redis lock to prevent duplicate concurrent jobs
+    public bool $wasReleased = false;
+    public int $releaseDelay = 0;
 
     public function __construct(
         public string $username,
@@ -41,12 +43,25 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     public function handle(OnlyFansApiClient $client): void
     {
         // Account-level queue rate limiting & worker isolation
+        // block(0) prevents worker busy-waiting to respect Horizon 60s worker execution budget
         Redis::throttle("throttle:account:{$this->accountId}")
+            ->block(0)
             ->allow(15)
             ->every(60)
             ->then(
                 fn () => $this->processRefresh($client),
-                fn () => $this->release(rand(10, 25)) // Backoff when throttled
+                function () {
+                    $delay = rand(10, 25);
+                    $this->wasReleased = true;
+                    $this->releaseDelay = $delay;
+                    Log::warning("Account throttled, backing off", [
+                        'account' => $this->accountId,
+                        'backoff' => $delay,
+                    ]);
+                    if ($this->job) {
+                        $this->release($delay);
+                    }
+                }
             );
     }
 
@@ -54,7 +69,7 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     {
         $profile = Profile::firstOrCreate(
             ['username' => $this->username],
-            ['likes' => 0, 'revision' => 0, 'attempt_count' => 0]
+            ['account_id' => $this->accountId, 'likes' => 0, 'revision' => 0, 'attempt_count' => 0]
         );
 
         $profile->update(['last_attempted_at' => now()]);
@@ -75,8 +90,8 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                     ->update([
                         'likes'                       => $payload->likes,
                         'revision'                    => $payload->revision,
-                        'display_name'                => $payload->displayName ?? $profile->display_name,
-                        'avatar_url'                  => $payload->avatarUrl ?? $profile->avatar_url,
+                        'display_name'                => $payload->displayName ?? DB::raw('display_name'),
+                        'avatar_url'                  => $payload->avatarUrl ?? DB::raw('avatar_url'),
                         'last_successful_refresh_at'  => now(),
                         'last_failed_at'              => null,
                         'last_failure_reason'         => null,
@@ -102,7 +117,7 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
             \App\Services\FansApiMetricsService::recordFailure($this->username, $e->getMessage());
             $profile->update([
                 'last_failed_at'      => now(),
-                'last_failure_reason' => $e->getMessage(),
+                'last_failure_reason' => substr($e->getMessage(), 0, 255),
             ]);
 
             // If upstream sent Retry-After header, honor it; otherwise apply exponential randomized jitter
@@ -118,21 +133,47 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                 'error'       => $e->getMessage(),
             ]);
 
-            $this->release($jitterDelay);
-        } catch (\Throwable $e) {
+            $this->wasReleased = true;
+            $this->releaseDelay = $jitterDelay;
+            if ($this->job) {
+                $this->release($jitterDelay);
+            }
+        } catch (\App\Exceptions\PermanentUpstreamException | \App\Exceptions\MalformedUpstreamPayloadException | \App\Exceptions\InvalidLikesValueException $e) {
+            \App\Services\FansApiMetricsService::recordFailure($this->username, $e->getMessage());
             $profile->update([
                 'last_failed_at'      => now(),
-                'last_failure_reason' => $e->getMessage(),
+                'last_failure_reason' => substr($e->getMessage(), 0, 255),
             ]);
 
             // Keep secrets out of logs: Only log structured class and sanitized message
-            Log::error("Permanent failure processing {$this->username}", [
+            Log::error("Permanent payload failure processing {$this->username}", [
                 'username'    => $this->username,
                 'error_class' => get_class($e),
                 'message'     => $e->getMessage(),
             ]);
 
-            $this->fail($e);
+            if ($this->job) {
+                $this->fail($e);
+            } else {
+                throw $e;
+            }
+        } catch (\Throwable $e) {
+            // Infrastructure or transient system exception (e.g. DB deadlock, network blip).
+            // Do not fail permanently; allow Laravel queue retry mechanism to retry the job.
+            \App\Services\FansApiMetricsService::recordFailure($this->username, $e->getMessage());
+            $profile->update([
+                'last_failed_at'      => now(),
+                'last_failure_reason' => substr($e->getMessage(), 0, 255),
+            ]);
+
+            Log::warning("Transient system exception during {$this->username}, queue will retry", [
+                'username'    => $this->username,
+                'error_class' => get_class($e),
+                'message'     => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
         }
     }
 }

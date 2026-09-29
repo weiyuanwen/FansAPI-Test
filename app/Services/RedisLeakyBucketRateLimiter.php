@@ -46,7 +46,7 @@ if (water + 1) <= capacity then
     return {1, math.floor(capacity - water), 0} -- {allowed, remaining, wait_time_sec}
 else
     local wait_time = (water + 1 - capacity) / leak_rate
-    return {0, 0, wait_time} -- {rejected, remaining, wait_time_sec}
+    return {0, 0, tostring(wait_time)} -- Return as string to avoid Redis RESP integer truncation of floats
 end
 LUA;
 

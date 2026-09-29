@@ -94,4 +94,40 @@ class RedisStreamsIngestionTest extends TestCase
 
         $this->assertEquals(0, $pendingCount);
     }
+
+    public function test_stream_consumer_handles_laravel_prefixed_stream_keys(): void
+    {
+        Redis::shouldReceive('xgroup')
+            ->once()
+            ->with('CREATE', 'stream:profile:updates', 'group:profile:persisters', '0', 'MKSTREAM')
+            ->andReturn(true);
+
+        // Mock stream entries returned with Laravel database prefix
+        Redis::shouldReceive('xreadgroup')
+            ->once()
+            ->andReturn([
+                'laravel_database_stream:profile:updates' => [
+                    '1727587200003-0' => [
+                        'username'  => 'prefixed_user',
+                        'likes'     => '50000',
+                        'revision'  => '2',
+                        'timestamp' => '2026-09-29T04:05:00Z',
+                    ],
+                ],
+            ]);
+
+        Redis::shouldReceive('xack')
+            ->once()
+            ->with(
+                'stream:profile:updates',
+                'group:profile:persisters',
+                ['1727587200003-0']
+            )
+            ->andReturn(1);
+
+        $service = new RedisStreamIngestionService();
+        $processed = $service->processMicroBatch('worker-node-prefixed', 100);
+
+        $this->assertEquals(1, $processed, 'Must process entry even when key has Laravel database prefix');
+    }
 }

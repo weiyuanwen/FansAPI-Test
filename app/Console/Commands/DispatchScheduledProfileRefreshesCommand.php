@@ -31,9 +31,11 @@ class DispatchScheduledProfileRefreshesCommand extends Command
 
         Profile::dueForRefresh()
             ->orderBy('id')
-            ->limit($limit)
-            ->chunkById(100, function ($profiles) use (&$dispatched) {
+            ->chunkById(100, function ($profiles) use (&$dispatched, $limit) {
                 foreach ($profiles as $profile) {
+                    if ($dispatched >= $limit) {
+                        return false; // Stop chunking when requested limit is reached
+                    }
                     $accountId = $profile->account_id ?? $profile->username;
                     RefreshOnlyFansProfileJob::dispatch($profile->username, $accountId);
                     $dispatched++;

@@ -73,13 +73,28 @@ class RateLimitAndBackoffTest extends TestCase
 
     public function test_jitter_algorithm_caps_at_120_seconds(): void
     {
-        $job = new RefreshOnlyFansProfileJob('madison420ivy');
+        Profile::create([
+            'username' => 'madison420ivy',
+            'likes'    => 120000,
+            'revision' => 10,
+        ]);
 
-        // Test jitter formula: min(120, (int) (pow(2, $attempt) + rand(2, 8)))
-        $highAttempt = 10; // 2^10 = 1024
-        $jitterDelay = min(120, (int) (pow(2, $highAttempt) + rand(2, 8)));
+        Http::fake([
+            'onlyfans.com/api2/v2/users/madison420ivy' => Http::response('Too Many Requests', 429),
+        ]);
 
-        $this->assertSame(120, $jitterDelay, 'Jitter delay must be capped at 120s max to prevent deadlock');
+        $mockJob = $this->getMockBuilder(RefreshOnlyFansProfileJob::class)
+            ->setConstructorArgs(['madison420ivy'])
+            ->onlyMethods(['attempts'])
+            ->getMock();
+        $mockJob->method('attempts')->willReturn(10); // 2^10 = 1024 + rand(2,8) > 120
+
+        $refMethod = new \ReflectionMethod(RefreshOnlyFansProfileJob::class, 'processRefresh');
+        $refMethod->setAccessible(true);
+        $refMethod->invoke($mockJob, new OnlyFansApiClient());
+
+        $this->assertTrue($mockJob->wasReleased, 'Job must be released on 429');
+        $this->assertSame(120, $mockJob->releaseDelay, 'Jitter delay must be capped at 120s max to prevent deadlock');
     }
 
     public function test_upstream_retry_after_header_is_honored_and_capped_at_120_seconds(): void

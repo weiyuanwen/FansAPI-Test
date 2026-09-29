@@ -82,11 +82,24 @@ class RedisStreamIngestionService
             $count
         );
 
-        if (empty($entries) || !isset($entries[$this->streamKey])) {
+        if (empty($entries)) {
             return 0;
         }
 
-        $messages = $entries[$this->streamKey];
+        // Support both un-prefixed keys and Redis keys returned with Laravel's REDIS_PREFIX
+        $messages = [];
+        if (isset($entries[$this->streamKey])) {
+            $messages = $entries[$this->streamKey];
+        } else {
+            $firstStream = reset($entries);
+            if (is_array($firstStream)) {
+                $messages = $firstStream;
+            }
+        }
+
+        if (empty($messages)) {
+            return 0;
+        }
         $ackedIds = [];
         $batchData = [];
 
