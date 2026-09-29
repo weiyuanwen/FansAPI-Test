@@ -1495,21 +1495,36 @@ readonly class OnlyFansProfilePayload
         }
         $revision = (int) $data['revision'];
 
-        // 2. Extract likes from modern nested format OR fallback to legacy root format
+        // 2. Extract Likes:
+        // If modern nested "profile" format is provided, it is authoritative.
+        // We do NOT fall back to legacy root if "profile" object is present with null/missing likes.
         $likesRaw = null;
-        if (isset($data['profile']) && is_array($data['profile']) && array_key_exists('likes', $data['profile'])) {
-            $likesRaw = $data['profile']['likes'];
-        } elseif (array_key_exists('likes', $data)) {
-            $likesRaw = $data['likes'];
-        }
+        $profileData = [];
 
-        // 3. Strict validation: missing likes is NOT allowed. Explicit 0 is valid.
-        if ($likesRaw === null) {
+        if (array_key_exists('profile', $data)) {
+            if (!is_array($data['profile'])) {
+                throw new MalformedUpstreamPayloadException("Upstream 'profile' field must be an array for {$username}.");
+            }
+            $profileData = $data['profile'];
+            if (!array_key_exists('likes', $profileData) || $profileData['likes'] === null) {
+                throw new MalformedUpstreamPayloadException("Authoritative 'profile.likes' is missing or null in upstream response for {$username}.");
+            }
+            $likesRaw = $profileData['likes'];
+        } elseif (array_key_exists('likes', $data)) {
+            // Legacy root format
+            if ($data['likes'] === null) {
+                throw new MalformedUpstreamPayloadException("Legacy root 'likes' field is null in upstream response for {$username}.");
+            }
+            $likesRaw = $data['likes'];
+            $profileData = $data;
+        } else {
             throw new MalformedUpstreamPayloadException("Neither 'profile.likes' nor 'likes' found in upstream response for {$username}.");
         }
 
-        if (!is_numeric($likesRaw)) {
-            throw new InvalidLikesValueException("Likes value must be numeric, received: " . gettype($likesRaw));
+        // 3. Strict validation: missing likes is NOT allowed. Explicit 0 is valid.
+        if (is_bool($likesRaw) || !is_numeric($likesRaw) || is_array($likesRaw)) {
+            $type = gettype($likesRaw);
+            throw new InvalidLikesValueException("Likes value must be a numeric integer, received type: {$type}.");
         }
 
         $likes = (int) $likesRaw;
@@ -1517,8 +1532,6 @@ readonly class OnlyFansProfilePayload
         if ($likes < 0) {
             throw new InvalidLikesValueException("Likes cannot be negative: {$likes}");
         }
-
-        $profileData = $data['profile'] ?? $data;
 
         return new self(
             username: $username,
@@ -1528,6 +1541,11 @@ readonly class OnlyFansProfilePayload
             avatarUrl: $profileData['avatar'] ?? $profileData['avatarUrl'] ?? null,
             raw: $data
         );
+    }
+
+    public static function calculateRefreshInterval(int $likes): int
+    {
+        return $likes > 100000 ? 24 : 72;
     }
 }`,
     },
@@ -1564,7 +1582,9 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     public function __construct(
         public string $username,
         public string $accountId = 'default'
-    ) {}
+    ) {
+        $this->onQueue('profiles-high-priority');
+    }
 
     public function uniqueId(): string
     {
@@ -1573,12 +1593,6 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
 
     public function handle(OnlyFansApiClient $client): void
     {
-        Log::info("Starting profile refresh", [
-            'username' => $this->username,
-            'account'  => $this->accountId,
-            'attempt'  => $this->attempts(),
-        ]);
-
         // Account-level throttling to prevent capacity starvation
         Redis::throttle("throttle:account:{$this->accountId}")
             ->allow(15)
@@ -1593,12 +1607,12 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     {
         $profile = Profile::firstOrCreate(
             ['username' => $this->username],
-            ['likes' => 0, 'revision' => 0]
+            ['likes' => 0, 'revision' => 0, 'attempt_count' => 0]
         );
 
         $profile->update([
             'last_attempted_at' => now(),
-            'attempt_count'     => DB::raw('attempt_count + 1'),
+            'attempt_count'     => DB::raw('COALESCE(attempt_count, 0) + 1'),
         ]);
 
         try {

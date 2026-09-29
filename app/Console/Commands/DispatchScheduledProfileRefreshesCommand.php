@@ -34,7 +34,8 @@ class DispatchScheduledProfileRefreshesCommand extends Command
             ->limit($limit)
             ->chunkById(100, function ($profiles) use (&$dispatched) {
                 foreach ($profiles as $profile) {
-                    RefreshOnlyFansProfileJob::dispatch($profile->username);
+                    $accountId = $profile->account_id ?? $profile->username;
+                    RefreshOnlyFansProfileJob::dispatch($profile->username, $accountId);
                     $dispatched++;
                 }
             });

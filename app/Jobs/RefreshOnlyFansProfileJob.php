@@ -30,7 +30,7 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
         public string $username,
         public string $accountId = 'default'
     ) {
-        $this->onQueue('profiles-high');
+        $this->onQueue('profiles-high-priority');
     }
 
     public function uniqueId(): string

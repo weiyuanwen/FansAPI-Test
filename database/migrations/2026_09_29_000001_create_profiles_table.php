@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('profiles', function (Blueprint $table) {
             $table->id();
             $table->string('username')->unique();
+            $table->string('account_id')->nullable()->index();
             $table->string('display_name')->nullable();
             $table->string('avatar_url')->nullable();
             $table->unsignedBigInteger('likes')->default(0);

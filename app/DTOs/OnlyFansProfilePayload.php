@@ -106,6 +106,6 @@ readonly class OnlyFansProfilePayload
 
     public static function calculateRefreshInterval(int $likes): int
     {
-        return \App\Models\Profile::calculateIntervalForLikes($likes);
+        return $likes > 100000 ? 24 : 72;
     }
 }

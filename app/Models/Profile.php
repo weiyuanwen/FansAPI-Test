@@ -12,6 +12,7 @@ class Profile extends Model
 
     protected $fillable = [
         'username',
+        'account_id',
         'display_name',
         'avatar_url',
         'likes',
@@ -36,11 +37,11 @@ class Profile extends Model
 
     /**
      * Refresh profiles above 100,000 likes every 24 hours and all others every 72 hours.
-     * Exactly 100,000 belongs to the 72-hour group.
+     * Delegates to DTO domain logic. Exactly 100,000 belongs to the 72-hour group.
      */
     public static function calculateIntervalForLikes(int $likes): int
     {
-        return $likes > 100000 ? 24 : 72;
+        return \App\DTOs\OnlyFansProfilePayload::calculateRefreshInterval($likes);
     }
 
     /**
