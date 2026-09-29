@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'default' => env('QUEUE_CONNECTION', 'redis'),
+
+    'connections' => [
+        'sync' => [
+            'driver' => 'sync',
+        ],
+
+        'redis' => [
+            'driver'      => 'redis',
+            'connection'  => 'default',
+            'queue'       => env('REDIS_QUEUE', 'default'),
+            // CRITICAL: retry_after (90s) > worker_timeout (60s) > job_timeout (30s)
+            'retry_after' => 90,
+            'block_for'   => null,
+            'after_commit' => false,
+        ],
+    ],
+
+    'failed' => [
+        'driver'   => env('QUEUE_FAILED_DRIVER', 'database-uuids'),
+        'database' => env('DB_CONNECTION', 'mysql'),
+        'table'    => 'failed_jobs',
+    ],
+];

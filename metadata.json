@@ -2,5 +2,7 @@
   "name": "FansAPI Laravel 13 Incident Workbench & Master Prompt",
   "description": "Production-grade prompt generator, architecture blueprint, and interactive simulator for the FansAPI Laravel 13 profile-fetch service incident, queue isolation, and automated tests.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
