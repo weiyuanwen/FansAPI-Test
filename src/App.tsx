@@ -516,6 +516,16 @@ const PAYLOAD_PRESETS: Record<string, { label: string; status: number; json: str
       name: 'Bad Actor'
     }, null, 2),
   },
+  empty_string_likes: {
+    label: 'Empty String Likes ("")',
+    status: 200,
+    desc: 'Empty string is a common upstream placeholder. JS Number("") is 0, PHP is_numeric("") is false — the DTO throws InvalidLikesValueException instead of committing 0 likes.',
+    json: JSON.stringify({
+      likes: "",
+      revision: 14,
+      name: 'Placeholder Sender'
+    }, null, 2),
+  },
   server_500: {
     label: 'HTTP 500 Empty Body',
     status: 500,
@@ -535,6 +545,14 @@ const PAYLOAD_PRESETS: Record<string, { label: string; status: number; json: str
     }, null, 2),
   },
 };
+
+// Mirrors PHP is_numeric(): rejects "", "  ", booleans, arrays and objects.
+// Number("") is 0, so a bare isNaN(Number(x)) check silently accepts empty strings.
+function isNumericLike(value: unknown): boolean {
+  if (typeof value === 'boolean' || value === null || Array.isArray(value) || typeof value === 'object') return false;
+  if (typeof value === 'string' && value.trim() === '') return false;
+  return isFinite(Number(value));
+}
 
 function evaluateTransformations(rawJson: string, httpStatus: number, currentRev: number = 10, currentLikes: number = 120000) {
   let brokenResult = {
@@ -606,6 +624,11 @@ function evaluateTransformations(rawJson: string, httpStatus: number, currentRev
   if (parsed?.profile && parsed?.profile?.likes !== undefined && parsed?.likes === undefined) {
     brokenResult.isCorrupted = true;
     brokenResult.description = `UPSTREAM DRIFT FAILURE: Upstream sent likes inside payload.profile.likes (${parsed.profile.likes.toLocaleString()}). Legacy code looked only at root ($data['likes']), read null, defaulted to 0, and wiped Madison Ivy's 120,000 likes!`;
+  } else if (parsed?.likes !== undefined && !isNumericLike(parsed.likes)) {
+    // parseInt("", 10) is NaN, and (NaN || 0) collapses to 0 — the same silent wipe
+    // as ?? 0. An explicit numeric 0 stays on the clean path; it is a valid reading.
+    brokenResult.isCorrupted = true;
+    brokenResult.description = `NULL-COALESCION WIPE: Upstream sent likes as ${JSON.stringify(parsed.likes)}, which is not a number. parseInt() returned NaN, the || 0 fallback committed ${legacyLikes.toLocaleString()}, and the previous ${currentLikes.toLocaleString()} likes were erased!`;
   } else if (legacyRev < currentRev && legacyRev > 0) {
     brokenResult.isCorrupted = true;
     brokenResult.description = `OUT-OF-ORDER REGRESSION: Inbound revision ${legacyRev} is older than database revision ${currentRev}. Legacy handler lacked optimistic lock and regressed newer data!`;
@@ -619,7 +642,7 @@ function evaluateTransformations(rawJson: string, httpStatus: number, currentRev
 
   // FIXED EVALUATION: OnlyFansProfilePayload
   try {
-    if (parsed.revision === undefined || parsed.revision === null || isNaN(Number(parsed.revision))) {
+    if (parsed.revision === undefined || parsed.revision === null || !isNumericLike(parsed.revision)) {
       throw new Error("Missing or invalid 'revision'");
     }
     const inRev = Number(parsed.revision);
@@ -639,7 +662,7 @@ function evaluateTransformations(rawJson: string, httpStatus: number, currentRev
       throw new Error("Neither 'profile.likes' nor 'likes' found");
     }
 
-    if (typeof likesVal === 'boolean' || isNaN(Number(likesVal)) || Array.isArray(likesVal) || typeof likesVal === 'object') {
+    if (!isNumericLike(likesVal)) {
       throw new Error(`Likes must be numeric integer, received: ${typeof likesVal}`);
     }
 

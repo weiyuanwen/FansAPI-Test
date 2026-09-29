@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+vendor/
+.phpunit.cache/
+.phpunit.result.cache
