@@ -1610,10 +1610,10 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
             ['likes' => 0, 'revision' => 0, 'attempt_count' => 0]
         );
 
-        $profile->update([
-            'last_attempted_at' => now(),
-            'attempt_count'     => DB::raw('COALESCE(attempt_count, 0) + 1'),
-        ]);
+        $profile->update(['last_attempted_at' => now()]);
+        $profile->increment('attempt_count'); // Increment directly in SQL - bypasses Eloquent cast conflicts
+
+        \App\Services\FansApiMetricsService::recordAttempt($this->username);
 
         try {
             $rawResponse = $client->fetchProfile($this->username);

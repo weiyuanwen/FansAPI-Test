@@ -101,7 +101,7 @@ class RedisStreamIngestionService
         }
 
         // Execute atomic bulk upsert with monotonic revision protection
-        DB::transaction(function () use ($batchData) {
+        $persistBulk = function () use ($batchData) {
             foreach ($batchData as $item) {
                 DB::statement("
                     INSERT INTO profiles (username, likes, revision, last_successful_refresh_at, updated_at)
@@ -120,7 +120,14 @@ class RedisStreamIngestionService
                     'updated_at'   => $item['updated_at'],
                 ]);
             }
-        });
+        };
+
+        // Avoid PDOException: There is already an active transaction under RefreshDatabase
+        if (DB::transactionLevel() > 0) {
+            $persistBulk();
+        } else {
+            DB::transaction($persistBulk);
+        }
 
         // Acknowledge processed messages (XACK)
         if (!empty($ackedIds)) {

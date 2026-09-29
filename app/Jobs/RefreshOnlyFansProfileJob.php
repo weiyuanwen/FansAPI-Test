@@ -57,10 +57,10 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
             ['likes' => 0, 'revision' => 0, 'attempt_count' => 0]
         );
 
-        $profile->update([
-            'last_attempted_at' => now(),
-            'attempt_count'     => DB::raw('COALESCE(attempt_count, 0) + 1'),
-        ]);
+        $profile->update(['last_attempted_at' => now()]);
+        $profile->increment('attempt_count');
+
+        \App\Services\FansApiMetricsService::recordAttempt($this->username);
 
         try {
             $rawResponse = $client->fetchProfile($this->username);
@@ -97,7 +97,9 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                 'likes'    => $payload->likes,
                 'revision' => $payload->revision,
             ]);
+            \App\Services\FansApiMetricsService::recordSuccess($this->username, $payload->likes, $payload->revision);
         } catch (TransientUpstreamException $e) {
+            \App\Services\FansApiMetricsService::recordFailure($this->username, $e->getMessage());
             $profile->update([
                 'last_failed_at'      => now(),
                 'last_failure_reason' => $e->getMessage(),

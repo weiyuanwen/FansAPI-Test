@@ -72,7 +72,7 @@ class RedisStreamsIngestionTest extends TestCase
             ->with(
                 'stream:profile:updates',
                 'group:profile:persisters',
-                ['172758720001-0', '172758720002-0']
+                ['1727587200001-0', '1727587200002-0']
             )
             ->andReturn(2);
 
