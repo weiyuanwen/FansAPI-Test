@@ -13,32 +13,47 @@ class OnlyFansApiClient
         private string $baseUrl = 'https://onlyfans.com/api2/v2',
         private ?string $token = null
     ) {
-        $this->token = config('services.onlyfans.token');
+        $this->token = $token ?? config('services.onlyfans.token');
     }
 
     public function fetchProfile(string $username): array
     {
-        $response = Http::withHeaders([
+        $headers = [
             'Accept'     => 'application/json',
             'User-Agent' => 'FansAPI-Worker/1.0',
-        ])
-        ->connectTimeout(3)
-        ->timeout(5)
-        ->get("{$this->baseUrl}/users/{$username}");
+        ];
+
+        if (!empty($this->token)) {
+            $headers['Authorization'] = "Bearer {$this->token}";
+        }
+
+        $response = Http::withHeaders($headers)
+            ->connectTimeout(3)
+            ->timeout(5)
+            ->get("{$this->baseUrl}/users/{$username}");
 
         if ($response->status() === 429) {
-            // Upstream 429 without Retry-After header
-            $retryAfter = $response->header('Retry-After');
-            Log::warning("Upstream rate limited for {$username}", ['retry_after_header' => $retryAfter]);
-            throw new TransientUpstreamException("HTTP 429 Rate Limit Exceeded");
+            $rawRetryAfter = $response->header('Retry-After');
+            $retryAfter = is_numeric($rawRetryAfter) ? (int) $rawRetryAfter : null;
+
+            Log::warning("Upstream rate limited for {$username}", [
+                'retry_after_header' => $retryAfter,
+            ]);
+
+            throw new TransientUpstreamException(
+                "HTTP 429 Rate Limit Exceeded",
+                retryAfter: $retryAfter
+            );
         }
 
         if ($response->serverError()) {
-            throw new TransientUpstreamException("HTTP {$response->status()} Upstream Error: " . $response->body());
+            // Keep secrets out of logs: Never attach raw response body
+            throw new TransientUpstreamException("HTTP {$response->status()} Upstream Server Error");
         }
 
         if ($response->clientError()) {
-            throw new PermanentUpstreamException("HTTP {$response->status()} Client Error: " . $response->body());
+            // Keep secrets out of logs: Never attach raw response body
+            throw new PermanentUpstreamException("HTTP {$response->status()} Client Error");
         }
 
         $json = $response->json();

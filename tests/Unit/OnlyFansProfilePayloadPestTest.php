@@ -85,7 +85,7 @@ describe('OnlyFansProfilePayload Unit Tests (Pest)', function () {
                 'likes'    => $badValue,
                 'revision' => 10,
             ]))->toThrow(InvalidLikesValueException::class);
-        })->with([true, false, 'many_likes', '', ['count' => 10]]);
+        })->with([true, false, 'many_likes', '', [['count' => 10]]]);
     });
 
     describe('Refresh Cadence Rules (24h vs 72h)', function () {

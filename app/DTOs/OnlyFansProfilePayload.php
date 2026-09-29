@@ -43,29 +43,33 @@ readonly class OnlyFansProfilePayload
             throw new MalformedUpstreamPayloadException("Upstream 'revision' cannot be negative ({$revision}) for {$username}.");
         }
 
-        // 2. Extract Likes: Modern nested format takes precedence, fallback to legacy root
+        // 2. Extract Likes:
+        // If modern nested "profile" format is provided, it is authoritative.
+        // We do NOT fall back to legacy root if "profile" object is present with null/missing likes.
         $likesRaw = null;
         $profileData = [];
 
-        if (array_key_exists('profile', $data) && is_array($data['profile'])) {
+        if (array_key_exists('profile', $data)) {
+            if (!is_array($data['profile'])) {
+                throw new MalformedUpstreamPayloadException("Upstream 'profile' field must be an array for {$username}.");
+            }
             $profileData = $data['profile'];
-            if (array_key_exists('likes', $profileData)) {
-                $likesRaw = $profileData['likes'];
+            if (!array_key_exists('likes', $profileData) || $profileData['likes'] === null) {
+                throw new MalformedUpstreamPayloadException("Authoritative 'profile.likes' is missing or null in upstream response for {$username}.");
             }
-        }
-
-        if ($likesRaw === null && array_key_exists('likes', $data)) {
+            $likesRaw = $profileData['likes'];
+        } elseif (array_key_exists('likes', $data)) {
+            // Legacy root format
+            if ($data['likes'] === null) {
+                throw new MalformedUpstreamPayloadException("Legacy root 'likes' field is null in upstream response for {$username}.");
+            }
             $likesRaw = $data['likes'];
-            if (empty($profileData)) {
-                $profileData = $data;
-            }
-        }
-
-        // 3. Strict Likes Validation
-        if ($likesRaw === null) {
+            $profileData = $data;
+        } else {
             throw new MalformedUpstreamPayloadException("Neither 'profile.likes' nor 'likes' found in upstream response for {$username}.");
         }
 
+        // 3. Strict Likes Validation
         // Booleans in PHP (true/false) evaluate to 1/0 with is_numeric in some contexts or cast poorly; reject explicitly
         if (is_bool($likesRaw) || !is_numeric($likesRaw) || is_array($likesRaw)) {
             $type = gettype($likesRaw);
@@ -90,6 +94,7 @@ readonly class OnlyFansProfilePayload
 
     /**
      * Determines whether this profile qualifies for high-cadence refresh (24 hours).
+     * Delegates directly to Profile model's single source of truth.
      * Rule:
      * - > 100,000 likes => 24 hours
      * - <= 100,000 likes (including exactly 100,000) => 72 hours
@@ -101,6 +106,6 @@ readonly class OnlyFansProfilePayload
 
     public static function calculateRefreshInterval(int $likes): int
     {
-        return $likes > 100000 ? 24 : 72;
+        return \App\Models\Profile::calculateIntervalForLikes($likes);
     }
 }

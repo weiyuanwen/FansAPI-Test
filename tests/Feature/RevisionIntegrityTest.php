@@ -30,7 +30,7 @@ class RevisionIntegrityTest extends TestCase
         ]);
 
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         $profile->refresh();
         $this->assertSame(125000, $profile->likes);
@@ -54,7 +54,7 @@ class RevisionIntegrityTest extends TestCase
         ]);
 
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         $profile->refresh();
         $this->assertSame(130000, $profile->likes, 'Database likes must not be regressed by older revision');
@@ -78,7 +78,7 @@ class RevisionIntegrityTest extends TestCase
         ]);
 
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         $profile->refresh();
         $this->assertSame(120000, $profile->likes);

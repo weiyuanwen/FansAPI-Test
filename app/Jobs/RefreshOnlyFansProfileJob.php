@@ -2,13 +2,14 @@
 
 namespace App\Jobs;
 
-use App\DTOs\OnlyFansProfilePayload;
-use App\Exceptions\TransientUpstreamException;
 use App\Models\Profile;
+use App\DTOs\OnlyFansProfilePayload;
 use App\Services\OnlyFansApiClient;
+use App\Exceptions\TransientUpstreamException;
+use App\Exceptions\PermanentUpstreamException;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -20,15 +21,17 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 30; // Job-level timeout
     public int $tries = 4;
     public int $maxExceptions = 3;
-    public int $uniqueFor = 300; // 5-minute atomic unique lock
+    public int $timeout = 30; // Job timeout (strictly < worker timeout 60s and retry_after 90s)
+    public int $uniqueFor = 300; // 5-minute atomic redis lock to prevent duplicate concurrent jobs
 
     public function __construct(
         public string $username,
         public string $accountId = 'default'
-    ) {}
+    ) {
+        $this->onQueue('profiles-high');
+    }
 
     public function uniqueId(): string
     {
@@ -37,13 +40,7 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
 
     public function handle(OnlyFansApiClient $client): void
     {
-        Log::info("Starting profile refresh", [
-            'username' => $this->username,
-            'account'  => $this->accountId,
-            'attempt'  => $this->attempts(),
-        ]);
-
-        // Account-level throttling to prevent capacity starvation
+        // Account-level queue rate limiting & worker isolation
         Redis::throttle("throttle:account:{$this->accountId}")
             ->allow(15)
             ->every(60)
@@ -57,12 +54,12 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
     {
         $profile = Profile::firstOrCreate(
             ['username' => $this->username],
-            ['likes' => 0, 'revision' => 0]
+            ['likes' => 0, 'revision' => 0, 'attempt_count' => 0]
         );
 
         $profile->update([
             'last_attempted_at' => now(),
-            'attempt_count'     => DB::raw('attempt_count + 1'),
+            'attempt_count'     => DB::raw('COALESCE(attempt_count, 0) + 1'),
         ]);
 
         try {
@@ -83,7 +80,7 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                         'last_successful_refresh_at'  => now(),
                         'last_failed_at'              => null,
                         'last_failure_reason'         => null,
-                        'next_refresh_at'             => now()->addHours($profile->calculateIntervalForLikes($payload->likes)),
+                        'next_refresh_at'             => now()->addHours(Profile::calculateIntervalForLikes($payload->likes)),
                         'updated_at'                  => now(),
                     ]);
 
@@ -106,11 +103,16 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                 'last_failure_reason' => $e->getMessage(),
             ]);
 
-            // Exponential randomized jitter: 2^attempt + rand(2, 8)
-            $jitterDelay = min(120, (int) (pow(2, $this->attempts()) + rand(2, 8)));
+            // If upstream sent Retry-After header, honor it; otherwise apply exponential randomized jitter
+            $retryAfter = $e->getRetryAfter();
+            $jitterDelay = ($retryAfter !== null && $retryAfter > 0)
+                ? min(120, $retryAfter)
+                : min(120, (int) (pow(2, $this->attempts()) + rand(2, 8)));
+
             Log::warning("Transient upstream error, releasing with jitter delay", [
                 'username'    => $this->username,
                 'jitter_sec'  => $jitterDelay,
+                'error_class' => get_class($e),
                 'error'       => $e->getMessage(),
             ]);
 
@@ -120,7 +122,14 @@ class RefreshOnlyFansProfileJob implements ShouldQueue, ShouldBeUnique
                 'last_failed_at'      => now(),
                 'last_failure_reason' => $e->getMessage(),
             ]);
-            Log::error("Permanent failure processing {$this->username}", ['exception' => $e]);
+
+            // Keep secrets out of logs: Only log structured class and sanitized message
+            Log::error("Permanent failure processing {$this->username}", [
+                'username'    => $this->username,
+                'error_class' => get_class($e),
+                'message'     => $e->getMessage(),
+            ]);
+
             $this->fail($e);
         }
     }

@@ -33,7 +33,7 @@ class IncidentReproductionTest extends TestCase
 
         // 3. Dispatch the robust job
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         // 4. Assert data was updated to 121,000 and revision 11 (NOT wiped to 0!)
         $profile->refresh();
@@ -61,7 +61,7 @@ class IncidentReproductionTest extends TestCase
         ]);
 
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         $profile->refresh();
         // MUST still be revision 11 and 121,000 likes
@@ -82,7 +82,7 @@ class IncidentReproductionTest extends TestCase
         ]);
 
         $job = new RefreshOnlyFansProfileJob('madison420ivy');
-        app()->call([$job, 'handle']);
+        $job->handle(new \App\Services\OnlyFansApiClient());
 
         $profile->refresh();
         $this->assertSame(120000, $profile->likes); // Untouched!

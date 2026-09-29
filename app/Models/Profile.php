@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Laravel\Scout\Searchable;
 
 class Profile extends Model
@@ -37,9 +38,20 @@ class Profile extends Model
      * Refresh profiles above 100,000 likes every 24 hours and all others every 72 hours.
      * Exactly 100,000 belongs to the 72-hour group.
      */
-    public function calculateIntervalForLikes(int $likes): int
+    public static function calculateIntervalForLikes(int $likes): int
     {
         return $likes > 100000 ? 24 : 72;
+    }
+
+    /**
+     * Scope query to select profiles that are due or overdue for a background refresh.
+     */
+    public function scopeDueForRefresh(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->whereNull('next_refresh_at')
+              ->orWhere('next_refresh_at', '<=', now());
+        });
     }
 
     public function toSearchableArray(): array

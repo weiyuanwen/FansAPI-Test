@@ -2578,6 +2578,84 @@ class RedisLeakyBucketRateLimiterTest extends TestCase
     }
 }`,
     },
+    migration: {
+      title: 'database/migrations/2026_09_29_000001_create_profiles_table.php',
+      lang: 'php',
+      content: `<?php
+
+use Illuminate\\Database\\Migrations\\Migration;
+use Illuminate\\Database\\Schema\\Blueprint;
+use Illuminate\\Support\\Facades\\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('profiles', function (Blueprint $table) {
+            $table->id();
+            $table->string('username')->unique(); // Enforce unique constraint against duplicate jobs
+            $table->string('display_name')->nullable();
+            $table->string('avatar_url')->nullable();
+            $table->unsignedBigInteger('likes')->default(0);
+            $table->unsignedBigInteger('revision')->default(0)->index();
+            $table->unsignedInteger('attempt_count')->default(0); // Default 0 prevents NULL+1=NULL bug
+            $table->timestamp('last_attempted_at')->nullable();
+            $table->timestamp('last_successful_refresh_at')->nullable();
+            $table->timestamp('last_failed_at')->nullable();
+            $table->string('last_failure_reason')->nullable();
+            $table->timestamp('next_refresh_at')->nullable()->index();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('profiles');
+    }
+};`,
+    },
+    scheduler: {
+      title: 'app/Console/Commands/DispatchScheduledProfileRefreshesCommand.php',
+      lang: 'php',
+      content: `<?php
+
+namespace App\\Console\\Commands;
+
+use App\\Models\\Profile;
+use App\\Jobs\\RefreshOnlyFansProfileJob;
+use Illuminate\\Console\\Command;
+use Illuminate\\Support\\Facades\\Log;
+
+class DispatchScheduledProfileRefreshesCommand extends Command
+{
+    protected $signature = 'profiles:dispatch-refreshes {--limit=1000 : Max profiles to dispatch per cycle}';
+    protected $description = 'Dispatches background refresh jobs for creators due per 24h (>100k) or 72h (<=100k) cadence';
+
+    public function handle(): int
+    {
+        $limit = (int) $this->option('limit');
+        $dispatched = 0;
+
+        $this->info("Scanning profiles due for refresh (next_refresh_at <= now)...");
+
+        // Executes the 24h/72h schedule cadence against the database
+        Profile::dueForRefresh()
+            ->orderBy('id')
+            ->limit($limit)
+            ->chunkById(100, function ($profiles) use (&$dispatched) {
+                foreach ($profiles as $profile) {
+                    RefreshOnlyFansProfileJob::dispatch($profile->username);
+                    $dispatched++;
+                }
+            });
+
+        $this->info("Successfully dispatched {$dispatched} profile refresh jobs to Queue.");
+        Log::info("Dispatched scheduled profile refresh batch", ['count' => $dispatched]);
+
+        return Command::SUCCESS;
+    }
+}`,
+    },
   };
 
   return (
@@ -3728,6 +3806,8 @@ class RedisLeakyBucketRateLimiterTest extends TestCase
                 { id: 'job', label: 'RefreshOnlyFansProfileJob.php', type: 'Queue Job' },
                 { id: 'client', label: 'OnlyFansApiClient.php', type: 'HTTP Client' },
                 { id: 'model', label: 'Profile.php', type: 'Eloquent Model' },
+                { id: 'migration', label: '2026_09_29_create_profiles.php', type: 'Migration' },
+                { id: 'scheduler', label: 'DispatchScheduledRefreshes.php', type: 'Command' },
                 { id: 'redis_stream', label: 'RedisStreamIngestionService.php', type: 'Streams Buffer' },
                 { id: 'redis_stream_test', label: 'RedisStreamsIngestionTest.php', type: 'Streams Test' },
                 { id: 'leaky_bucket', label: 'RedisLeakyBucketRateLimiter.php', type: 'Leaky Bucket' },

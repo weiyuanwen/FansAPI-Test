@@ -163,15 +163,19 @@ class OnlyFansProfilePayloadTest extends TestCase
             ],
             'empty profile object missing likes' => [
                 ['profile' => ['name' => 'John'], 'revision' => 10],
-                'Neither \'profile.likes\' nor \'likes\' found',
+                'profile.likes',
             ],
             'null likes in nested profile' => [
                 ['profile' => ['likes' => null], 'revision' => 10],
-                'Neither \'profile.likes\' nor \'likes\' found',
+                'profile.likes',
+            ],
+            'null likes in nested profile does not fallback to legacy root' => [
+                ['profile' => ['likes' => null], 'likes' => 500, 'revision' => 11],
+                'profile.likes',
             ],
             'null likes in root' => [
                 ['likes' => null, 'revision' => 10],
-                'Neither \'profile.likes\' nor \'likes\' found',
+                'likes',
             ],
         ];
     }

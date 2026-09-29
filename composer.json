@@ -11,6 +11,8 @@
         "laravel/scout": "^10.0"
     },
     "require-dev": {
+        "mockery/mockery": "^1.6",
+        "orchestra/testbench": "^9.0|^8.0",
         "pestphp/pest": "^4.0"
     },
     "autoload": {
